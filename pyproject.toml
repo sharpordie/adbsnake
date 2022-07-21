@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "adbsnake"
+version = "0.1.0"
+description = ""
+authors = ["sharpordie <sharpordie@example.org>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+adb-shell = "^0.4.3"
+lxml = "^4.9.1"
+
+[tool.poetry.dev-dependencies]
+pytest = "^7.1"
+pytest-asyncio = "^0.19.0"
+aiofiles = "^0.8.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
