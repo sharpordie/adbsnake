@@ -36,17 +36,12 @@ async def test_attach(machine: Device):
 
 
 @mark.asyncio
-@mark.skip(reason="not implemented")
-async def test_center(machine: Device):
-    ...
-
-
-@mark.asyncio
 @mark.parametrize("distant", ["/sdcard/a.txt", "/sdcard/a/a.txt"])
 async def test_create(machine: Device, distant: str):
     await machine.create(distant)
     assert (await machine.search(f"'{distant}'"))[0] == distant
     await machine.remove(distant)
+
 
 @mark.asyncio
 @mark.skip(reason="not implemented")
@@ -113,6 +108,12 @@ async def test_launch(machine: Device):
 
 @mark.asyncio
 @mark.skip(reason="not implemented")
+async def test_locate(machine: Device):
+    ...
+
+
+@mark.asyncio
+@mark.skip(reason="not implemented")
 async def test_obtain(machine: Device):
     ...
 
@@ -121,7 +122,6 @@ async def test_obtain(machine: Device):
 async def test_reboot(machine: Device):
     await machine.reboot()
     assert (await machine.invoke("echo dummy")).strip() == "dummy"
-
 
 
 @mark.asyncio

@@ -7,9 +7,11 @@ from re import findall
 from types import TracebackType
 from typing import Optional, Type
 
+import cv2
 from adb_shell.adb_device_async import AdbDeviceTcpAsync
 from adb_shell.auth.keygen import keygen
 from adb_shell.auth.sign_pythonrsa import PythonRSASigner
+from adb_shell.exceptions import DeviceAuthError, InvalidResponseError, TcpTimeoutException
 from lxml.etree import Element, fromstring
 
 
@@ -23,8 +25,9 @@ class PackageInfo:
 
 class Common(ABC):
 
-    def __init__(self, address: str):
+    def __init__(self, address: str, storage: Optional[str] = None):
         self.manager = AdbDeviceTcpAsync(address)
+        self.storage = storage or dirname(abspath(__file__))
 
     async def __aenter__(self):
         return self
@@ -39,15 +42,10 @@ class Common(ABC):
         try:
             await self.manager.connect(rsa_keys=[await self.keygen()], auth_timeout_s=0.1)
             return True
-        except:
+        except (DeviceAuthError, InvalidResponseError) as e:
+            raise e
+        except TcpTimeoutException:
             return False
-
-    async def center(self, pattern: str) -> Optional[tuple[int, int]]:
-        if (element := await self.scrape(pattern)) is not None:
-            content = element.get("bounds")
-            results = [int(s) for s in (findall("\\d+", content))]
-            return int((results[0] + results[2]) / 2), int((results[1] + results[3]) / 2)
-        return None
 
     async def create(self, distant: str):
         await self.invoke(f"mkdir -p \'{dirname(distant)}\' ; touch \'{distant}\'")
@@ -56,14 +54,24 @@ class Common(ABC):
         await self.manager.close()
 
     async def detect(self, picture: str) -> Optional[tuple[int, int]]:
+        await self.remove("/sdcard/capture.png")
         await self.invoke("screencap -p /sdcard/capture.png")
-        capture = await self.obtain("/sdcard/capture.png")
-        if capture is not None:
-            # https://github.com/drov0/python-imagesearch/blob/master/python_imagesearch/imagesearch.py
-            ...
-            results = None
-            remove(capture)
-            return results
+        fetched = await self.obtain("/sdcard/capture.png")
+        if fetched is not None:
+            # img = cv2.imread(fetched)
+            # factors = np.unique(img.view(np.dtype((np.void, img.dtype.itemsize * img.shape[2])))).view(img.dtype).reshape(-1, img.shape[2])
+            # formula = cv2.TM_SQDIFF if len(factors) <= 1000 else cv2.TM_CCOEFF_NORMED
+            formula = cv2.TM_CCOEFF_NORMED
+            capture = cv2.cvtColor(cv2.imread(fetched), cv2.COLOR_RGB2GRAY)
+            element = cv2.cvtColor(cv2.imread(picture), cv2.COLOR_RGB2GRAY)
+            remove(fetched)
+            results = cv2.matchTemplate(capture, element, cv2.TM_CCOEFF_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(results)
+            # max_val = 1 - (min_val / 10_000_000) if formula == cv2.TM_SQDIFF else max_val
+            if max_val >= 0.8:
+                h, w = element.shape
+                results = max_loc[0] + (w / 2), max_loc[1] + (h / 2)
+                return int(results[0]), int(results[1])
         return None
 
     async def enable(self, package: str, enabled: bool):
@@ -94,10 +102,10 @@ class Common(ABC):
         await self.invoke(f"input text '{content}'")
 
     async def invoke(self, command: str) -> str:
-        return await self.manager.shell(command)
+        return await self.manager.shell(command, read_timeout_s=30.0)
 
-    async def keygen(self, deposit: Optional[str] = None, refresh: bool = False) -> PythonRSASigner:
-        pvt_key = join(deposit or dirname(abspath(__file__)), "adbkey")
+    async def keygen(self, refresh: bool = False) -> PythonRSASigner:
+        pvt_key = join(self.storage, "adbkey")
         pub_key = pvt_key + ".pub"
         if refresh or not exists(pub_key) or not exists(pvt_key):
             if exists(pub_key):
@@ -114,8 +122,15 @@ class Common(ABC):
     async def launch(self, package: str):
         await self.invoke(f"sleep 2 ; monkey -p '{package}' 1 ; sleep 2")
 
+    async def locate(self, pattern: str) -> Optional[tuple[int, int]]:
+        if (element := await self.scrape(pattern)) is not None:
+            content = element.get("bounds")
+            results = [int(s) for s in (findall("\\d+", content))]
+            return int((results[0] + results[2]) / 2), int((results[1] + results[3]) / 2)
+        return None
+
     async def obtain(self, distant: str) -> Optional[str]:
-        storage = join(dirname(abspath(__file__)), basename(distant))
+        storage = join(self.storage, basename(distant))
         await self.manager.pull(distant, storage)
         return storage if exists(storage) else None
 
@@ -137,7 +152,6 @@ class Common(ABC):
             await self.launch(package)
             await self.finish(package)
         return (await self.invoke(f"cat {fetched}")).strip()
-        # return await self.obtain(fetched)
 
     async def repeat(self, keycode: str, repeats: int = 1):
         await self.invoke(f"input keyevent $(printf '{keycode.upper()} %.0s' $(seq 1 {repeats}))")
@@ -157,7 +171,7 @@ class Common(ABC):
         return results.split("\n") if results is not None else None
 
     async def select(self, payload: str) -> bool:
-        results = await self.detect(payload) if exists(payload) else await self.center(payload)
+        results = await self.detect(payload) if exists(payload) else await self.locate(payload)
         if results is not None:
             await self.invoke(f"input tap {results[0]} {results[1]}")
             return True
